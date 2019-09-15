@@ -5,20 +5,32 @@ import time
 import sys
 import numpy as np
 
+from collections import Counter
+
 # Encapsulate our neural network in a class
 class SentimentNetwork:
-    def __init__(self, reviews, labels, hidden_nodes = 10, learning_rate = 0.1):
-        """Create a SentimenNetwork with the given settings
+
+
+    def __init__(self, reviews, labels, hidden_nodes = 10, min_count=20, polarity_cutoff=0.05, learning_rate = 0.1):
+        """
+        Create a SentimenNetwork with the given settings.
+
         Args:
             reviews(list) - List of reviews used for training
             labels(list) - List of POSITIVE/NEGATIVE labels associated with the given reviews
             hidden_nodes(int) - Number of nodes to create in the hidden layer
+            min_count(int) - Words are only added to the vocabulary if they occur in the vocabulary more than min_count times.
+            polarity_cutoff(float) - Words are only added to the vocabulary if the absolute value of their postive-to-negative ratio is at least polarity_cutoff.
             learning_rate(float) - Learning rate to use while training
         
         """
         # Assign a seed to our random number generator to ensure we get
         # reproducable results during development 
         np.random.seed(1)
+
+        # Save parameters 
+        self.min_count = min_count
+        self.polarity_cutoff = polarity_cutoff
 
         # process the reviews and their associated labels so that everything
         # is ready for training
@@ -31,22 +43,46 @@ class SentimentNetwork:
 
     def pre_process_data(self, reviews, labels):
         
+        # Calculate the positive-to-negative ratios of words used in the reviews.
+
+        positive_counter = Counter()
+        negative_counter = Counter()
+        total_counter = Counter()
+        for label, review in zip(labels, reviews):
+            words = review.split(' ')
+            if label=='POSITIVE':
+                positive_counter.update(words)
+            else:
+                negative_counter.update(words)
+            total_counter.update(words)
+
+        pn_ratios = Counter()
+        for word, usage in total_counter.items():
+            pn_ratios[word] = np.log(positive_counter[word]/(negative_counter[word] + 1.0))
+            #if usage >= self.min_count: # drop rare words
+            #    ratio = np.log(positive_counter[word]/(negative_counter[word] + 1.0))
+            #    if ratio >= self.polarity_cutoff:
+            #        pn_ratios[word] = ratio
+
+
         review_vocab = set()
         
-        # TODO: populate review_vocab with all of the words in the given reviews
-        #       Remember to split reviews into individual words 
-        #       using "split(' ')" instead of "split()".
+        # populate review_vocab with all of the words in the given reviews
         for review in reviews:
             for word in review.split(' '):
-                review_vocab.add(word)
+                if total_counter[word] >= self.min_count and np.abs(pn_ratios[word]) >= self.polarity_cutoff:
+                    review_vocab.add(word)
         #print(review_vocab)
         
+        #test_review = 'ghost of dragstrip hollow is a typical      s teens in turmoil movie . it is not a horror or science fiction movie . plot concerns a group of teens who are about to get kicked out of their  hot rod  club because they cannot meet the rent . once kicked out  they decide to try an old haunted house . the only saving grace for the film is that the  ghost   paul blaisdell in the she creature suit  turns out to be an out of work movie monster played by blaisdell .  '
+        #for word in test_review.split(' '):
+        #    print(total_counter[word], " ", pn_ratios[word])
+
+
         # Convert the vocabulary set to a list so we can access words via indices
         self.review_vocab = list(review_vocab)
         
         label_vocab = set()
-        # TODO: populate label_vocab with all of the words in the given labels.
-        #       There is no need to split the labels because each one is a single word.
         for label in labels:
             label_vocab.add(label)
         
@@ -59,28 +95,20 @@ class SentimentNetwork:
         
         # Create a dictionary of words in the vocabulary mapped to index positions
         self.word2index = {}
-        # TODO: populate self.word2index with indices for all the words in self.review_vocab
-        #       like you saw earlier in the notebook
+        # populate self.word2index with indices for all the words in self.review_vocab
         for i, word in enumerate(self.review_vocab):
             self.word2index[word] = i
         
-        #print(type(word2index))
-        #print(max(self.word2index.values()))
-        #print(len(self.word2index))
-        #print(len(self.review_vocab))
-        #print(self.review_vocab_size)
-        
         # Create a dictionary of labels mapped to index positions
         self.label2index = {}
-        # TODO: do the same thing you did for self.word2index and self.review_vocab, 
-        #       but for self.label2index and self.label_vocab instead
         for i, label in enumerate(self.label_vocab):
             self.label2index[label] = i
          
         
     # Modify init_network:
     # You no longer need a separate input layer, so remove any mention of self.layer_0
-    # You will be dealing with the old hidden layer more directly, so create self.layer_1, a two-dimensional matrix with shape 1 x hidden_nodes, with all values initialized to zero
+    # You will be dealing with the old hidden layer more directly, so create self.layer_1, a two-dimensional matrix with 
+    # shape 1 x hidden_nodes, with all values initialized to zero
     def init_network(self, input_nodes, hidden_nodes, output_nodes, learning_rate):
         # Store the number of nodes in input, hidden, and output layers.
         self.input_nodes = input_nodes
@@ -168,6 +196,9 @@ class SentimentNetwork:
             # Do not use an activation function for the hidden layer,
             # but use the sigmoid activation function for the output layer.
             rev = np.array(training_reviews[i])
+            if rev.size == 0:
+                print("\nReview is empty! Consider descreasing polarity cutoff.\n")
+                continue
             
             # my optimized implementation for sparse inputs of zeros and ones
             self.layer_1 = np.sum(self.weights_0_1[rev, :], axis=0, keepdims=True)
@@ -255,18 +286,22 @@ class SentimentNetwork:
         """
         Returns a POSITIVE or NEGATIVE prediction for the given review.
         """
-        # TODO: Run a forward pass through the network, like you did in the
-        #       "train" function. That means use the given review to 
-        #       update the input layer, then calculate values for the hidden layer,
-        #       and finally calculate the output layer.
+        # Run a forward pass through the network, like you did in the
+        # "train" function. That means use the given review to 
+        # update the input layer, then calculate values for the hidden layer,
+        # and finally calculate the output layer.
         #
         #       Note: The review passed into this function for prediction 
         #             might come from anywhere, so you should convert it 
         #             to lower case prior to using it.
         #self.update_input_layer(review.lower())
         
-        rev = [self.word2index[word] for word in review.split(' ') if word in self.word2index]
+        rev = list(set([self.word2index[word] for word in review.split(' ') if word in self.word2index]))
         rev = np.array(rev)
+        if (rev.size == 0):
+            print("\nReview is empty! Consider descreasing polarity cutoff.\n")
+            return 'UNKNOWN'
+
         #hidden_layer = np.matmul(self.layer_0, self.weights_0_1) # (n_ex, n_input) x (n_input, n_hidden) => (n_ex, n_hidden)
         self.layer_1 = np.sum(self.weights_0_1[rev, :], axis=0, keepdims=True)
         #print("layer_1:", self.layer_1.shape)
@@ -275,9 +310,9 @@ class SentimentNetwork:
         output_layer = self.sigmoid(output_layer)
         
         
-        # TODO: The output layer should now contain a prediction. 
-        #       Return `POSITIVE` for predictions greater-than-or-equal-to `0.5`, 
-        #       and `NEGATIVE` otherwise.
+        # The output layer should now contain a prediction. 
+        # Return `POSITIVE` for predictions greater-than-or-equal-to `0.5`, 
+        # and `NEGATIVE` otherwise.
         return 'POSITIVE' if output_layer >= 0.5 else 'NEGATIVE'
 
 
@@ -301,5 +336,9 @@ pretty_print_review_and_label(21934)
 pretty_print_review_and_label(5297)
 pretty_print_review_and_label(4998)
 
-mlp = SentimentNetwork(reviews[:-1000],labels[:-1000], learning_rate=0.1)
+#mlp = SentimentNetwork(reviews[:-1000],labels[:-1000], learning_rate=0.1)
+#mlp.train(reviews[:-1000],labels[:-1000])
+
+mlp = SentimentNetwork(reviews[:-1000],labels[:-1000],min_count=20,polarity_cutoff=0.8,learning_rate=0.01)
 mlp.train(reviews[:-1000],labels[:-1000])
+mlp.test(reviews[-1000:],labels[-1000:])
